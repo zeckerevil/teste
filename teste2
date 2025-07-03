@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sengi Manutenção - CMMS com IA Avançada</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chosen Palette: Cool Blues & Neutrals -->
+    <!-- Application Structure Plan: A single-page application (SPA) with a fixed sidebar for navigation and a main content area that dynamically displays different views (Dashboard, Cronograma, Ordens de Serviço, Indicadores). This dashboard-centric approach is ideal for the target persona (Gerente Carlos), providing immediate access to critical data and tools. The flow allows for quick analysis and action, starting from a high-level overview (Dashboard) and drilling down into specifics (OS list, Gantt chart). This structure was chosen for its intuitividade, eficiência e alinhamento com aplicações de gestão modernas, facilitando a tomada de decisão baseada em dados. -->
+    <!-- Visualization & Content Choices: Dashboard: KPI cards (HTML/CSS) for instant alerts (OS Atrasadas) and a Donut Chart (Chart.js) for status distribution, enabling quick assessment. O KPI de Conformidade Mensal usa um Gauge/Donut com meta editável para engajamento e acompanhamento de metas. Cronograma: Um Gráfico de Gantt é simulado usando um gráfico de barras horizontais empilhadas no Chart.js. Esta é uma solução criativa para visualizar a linha do tempo e as durações das tarefas sem bibliotecas externas complexas, focando no planejamento visual. Indicadores: Gráficos de linha (Chart.js) para MTTR/MTBF mostram tendências ao longo do tempo. Um gráfico de Pareto (Barras e Linha combinados) é usado para a análise de falhas, ajudando a identificar os principais problemas. Esta seleção de visualizações transforma dados brutos em insights acionáveis, alinhados com os objetivos do gerente. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        :root {
+            --bg-main: #f4f7fa;
+            --bg-sidebar: #1e293b;
+            --text-sidebar: #cbd5e1;
+            --text-sidebar-hover: #ffffff;
+            --bg-sidebar-hover: #334155;
+            --bg-active: #0f172a;
+            --primary: #3b82f6;
+            --primary-light: #60a5fa;
+            --secondary: #64748b;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --card-bg: #ffffff;
+            --text-primary: #111827;
+            --text-secondary: #4b5563;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-main);
+        }
+        .sidebar-link.active {
+            background-color: var(--bg-active);
+            color: var(--text-sidebar-hover);
+            border-left: 4px solid var(--primary);
+        }
+        .sidebar-link:hover {
+            background-color: var(--bg-sidebar-hover);
+            color: var(--text-sidebar-hover);
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 350px;
+            max-height: 400px;
+            background-color: var(--card-bg);
+            padding: 1rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+        @media (max-width: 768px) {
+            .chart-container {
+                height: 300px;
+            }
+        }
+        .kpi-card {
+            background-color: var(--card-bg);
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .kpi-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -2px rgb(0 0 0 / 0.1);
+        }
+        .modal {
+            display: none;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
+        }
+        .modal.show {
+            display: flex;
+            opacity: 1;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: var(--primary);
+            animation: spin 1s ease infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #os-table-body tr {
+            cursor: pointer;
+        }
+        #ganttChart:hover, #completionPerformanceChart:hover {
+            cursor: pointer;
+        }
+        .sidebar-open {
+            transform: translateX(0) !important;
+        }
+    </style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside class="w-64 flex-shrink-0 bg-slate-800 text-slate-300 flex flex-col fixed inset-y-0 left-0 z-30 transform -translate-x-full md:relative md:translate-x-0 transition-transform duration-300 ease-in-out" id="sidebar">
+        <div class="h-20 flex items-center justify-center px-4 border-b border-slate-700">
+            <div class="flex items-center text-white text-xl font-bold">
+                <i class="fas fa-cogs mr-2 text-blue-400 text-2xl"></i>
+                <span>Sengi Manutenção</span>
+            </div>
+        </div>
+        <nav class="flex-1 px-4 py-6 space-y-2">
+            <a href="#dashboard" class="sidebar-link flex items-center px-4 py-3 rounded-md transition-colors duration-200 active">
+                <i class="fas fa-tachometer-alt w-6 text-center"></i><span class="ml-4">Visão Geral</span>
+            </a>
+            <a href="#cronograma" class="sidebar-link flex items-center px-4 py-3 rounded-md transition-colors duration-200">
+                <i class="fas fa-calendar-alt w-6 text-center"></i><span class="ml-4">Cronograma</span>
+            </a>
+            <a href="#ordens" class="sidebar-link flex items-center px-4 py-3 rounded-md transition-colors duration-200">
+                <i class="fas fa-clipboard-list w-6 text-center"></i><span class="ml-4">Ordens de Serviço</span>
+            </a>
+            <a href="#envio" class="sidebar-link flex items-center px-4 py-3 rounded-md transition-colors duration-200">
+                <i class="fas fa-paper-plane w-6 text-center"></i><span class="ml-4">Envio de Cronograma</span>
+            </a>
+            <a href="#indicadores" class="sidebar-link flex items-center px-4 py-3 rounded-md transition-colors duration-200">
+                <i class="fas fa-chart-line w-6 text-center"></i><span class="ml-4">Indicadores</span>
+            </a>
+        </nav>
+        <div class="px-4 py-6 border-t border-slate-700">
+            <div class="flex items-center">
+                <img src="https://placehold.co/40x40/64748b/ffffff?text=T" alt="Thiago Amorin" class="rounded-full">
+                <div class="ml-3">
+                    <p class="text-sm font-medium text-white">Thiago Amorin</p>
+                    <p class="text-xs text-slate-400">Técnico de Planejamento</p>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="flex-1 flex flex-col">
+        <header class="md:hidden bg-white shadow-md h-16 flex items-center justify-between px-4 flex-shrink-0">
+             <div class="flex items-center text-gray-800 text-lg font-bold">
+                <i class="fas fa-cogs mr-2 text-blue-500"></i>
+                <span>Sengi Manutenção</span>
+            </div>
+            <button id="hamburger-btn" class="text-gray-600 hover:text-gray-800">
+                <i class="fas fa-bars text-2xl"></i>
+            </button>
+        </header>
+        <main class="flex-1 p-4 md:p-8 overflow-y-auto">
+            
+            <!-- Dashboard View -->
+            <section id="dashboard-view" class="view-section">
+                <h2 class="text-3xl font-bold text-gray-800 mb-2">Visão Geral</h2>
+                <p class="text-gray-600 mb-8">Este é o seu painel de controle central. Obtenha uma visão instantânea dos indicadores chave, status das ordens de serviço e próximos agendamentos para tomar decisões rápidas e eficazes.</p>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div class="kpi-card p-6 flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-lg font-semibold text-gray-700">OS Atrasadas</h3>
+                                <span class="p-2 bg-red-100 rounded-full"><i class="fas fa-exclamation-triangle text-red-500"></i></span>
+                            </div>
+                            <p class="text-4xl font-bold text-red-500 mt-4" id="kpi-atrasadas">0</p>
+                        </div>
+                        <a href="#ordens" data-filter="Atrasada" class="nav-filter-link text-sm text-blue-600 hover:underline mt-4">Ver detalhes <i class="fas fa-arrow-right ml-1"></i></a>
+                    </div>
+                     <div class="kpi-card p-6 flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-lg font-semibold text-gray-700">Em Andamento</h3>
+                                <span class="p-2 bg-blue-100 rounded-full"><i class="fas fa-tasks text-blue-500"></i></span>
+                            </div>
+                            <p class="text-4xl font-bold text-blue-500 mt-4" id="kpi-andamento">0</p>
+                        </div>
+                         <a href="#ordens" data-filter="Em Andamento" class="nav-filter-link text-sm text-blue-600 hover:underline mt-4">Acompanhar <i class="fas fa-arrow-right ml-1"></i></a>
+                    </div>
+                    <div class="kpi-card p-6 flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-lg font-semibold text-gray-700">Concluídas (Mês)</h3>
+                                 <span class="p-2 bg-green-100 rounded-full"><i class="fas fa-check-circle text-green-500"></i></span>
+                            </div>
+                            <p class="text-4xl font-bold text-green-500 mt-4" id="kpi-concluidas-mes">0</p>
+                        </div>
+                        <a href="#ordens" data-filter="Concluída" class="nav-filter-link text-sm text-blue-600 hover:underline mt-4">Ver relatório <i class="fas fa-arrow-right ml-1"></i></a>
+                    </div>
+                    <div class="kpi-card p-6 flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-lg font-semibold text-gray-700">Preventivas (7 dias)</h3>
+                                 <span class="p-2 bg-amber-100 rounded-full"><i class="fas fa-shield-alt text-amber-500"></i></span>
+                            </div>
+                            <p class="text-4xl font-bold text-amber-500 mt-4" id="kpi-preventivas">0</p>
+                        </div>
+                         <a href="#cronograma" class="nav-link text-sm text-blue-600 hover:underline mt-4">Planejar <i class="fas fa-arrow-right ml-1"></i></a>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 mt-8">
+                    <div class="lg:col-span-3 bg-white p-6 rounded-lg shadow-md">
+                         <h3 class="text-xl font-bold text-gray-800 mb-4">Análise de Falhas (Pareto)</h3>
+                        <p class="text-gray-600 mb-4">Identifique os ativos que mais causam problemas. O gráfico de Pareto mostra quais equipamentos são responsáveis por 80% das falhas, permitindo focar os esforços de melhoria onde eles terão maior impacto.</p>
+                        <div class="chart-container"><canvas id="paretoChart"></canvas></div>
+                    </div>
+                    <div class="lg:col-span-2 bg-white p-6 rounded-lg shadow-md">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-bold text-gray-800">Conformidade Mensal</h3>
+                            <button id="edit-goal-btn" class="text-blue-500 hover:text-blue-700"><i class="fas fa-pencil-alt"></i></button>
+                        </div>
+                        <p class="text-gray-600 mb-4">Acompanhe o progresso das OS concluídas em relação à meta mensal. Use o ícone de lápis para ajustar a meta e manter sua equipe alinhada aos objetivos.</p>
+                        <div class="chart-container" style="height:290px"><canvas id="monthlyGoalChart"></canvas></div>
+                        <div class="text-center mt-4">
+                            <span class="text-2xl font-bold text-gray-700" id="goal-progress-text">0 / 0</span>
+                            <p class="text-sm text-gray-500">Concluídas vs. Meta</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Cronograma View -->
+            <section id="cronograma-view" class="view-section hidden">
+                <h2 class="text-3xl font-bold text-gray-800 mb-2">Cronograma de Manutenção</h2>
+                <p class="text-gray-600 mb-8">Visualize e gerencie todas as atividades planejadas. O gráfico de Gantt oferece uma visão clara da linha do tempo, durações e sobreposições das tarefas, ajudando a otimizar a alocação de recursos e evitar conflitos.</p>
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                     <div class="flex flex-wrap items-center gap-4 mb-4">
+                        <h3 class="text-xl font-bold text-gray-800">Gráfico de Gantt</h3>
+                        <div class="flex-grow"></div>
+                        <select id="gantt-filter-technician" class="p-2 border rounded-md bg-gray-50"><option value="all">Todos os Técnicos</option></select>
+                        <select id="gantt-filter-status" class="p-2 border rounded-md bg-gray-50"><option value="all">Todos os Status</option><option value="Planejada">Planejada</option><option value="Em Andamento">Em Andamento</option><option value="Atrasada">Atrasada</option><option value="Concluída">Concluída</option></select>
+                     </div>
+                    <div class="chart-container" style="height: 500px;"><canvas id="ganttChart"></canvas></div>
+                </div>
+            </section>
+
+            <!-- Ordens de Servico View -->
+            <section id="ordens-view" class="view-section hidden">
+                <h2 class="text-3xl font-bold text-gray-800 mb-2">Ordens de Serviço</h2>
+                <p class="text-gray-600 mb-8">Gerencie o ciclo de vida completo de todas as ordens de serviço. Utilize os filtros para encontrar rapidamente o que precisa, e clique em uma OS para ver seus detalhes completos.</p>
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                        <div class="relative flex-grow lg:col-span-2">
+                            <input type="text" id="os-search" placeholder="Buscar por Título..." class="w-full p-3 pl-10 border rounded-lg focus:ring-2 focus:ring-blue-500">
+                            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                        </div>
+                        <div class="relative flex-grow">
+                            <input type="text" id="os-filter-asset" placeholder="Filtrar por Ativo..." class="w-full p-3 pl-10 border rounded-lg focus:ring-2 focus:ring-blue-500">
+                            <i class="fas fa-tag absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                        </div>
+                        <select id="os-filter-status" class="p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500"><option value="all">Todos os Status</option><option value="Planejada">Planejada</option><option value="Em Andamento">Em Andamento</option><option value="Concluída">Concluída</option><option value="Atrasada">Atrasada</option><option value="Aguardando Peças">Aguardando Peças</option></select>
+                        <select id="os-filter-priority" class="p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500"><option value="all">Todas as Prioridades</option><option value="Alta">Alta</option><option value="Média">Média</option><option value="Baixa">Baixa</option></select>
+                        <select id="os-filter-shift" class="p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500"><option value="all">Todos os Turnos</option><option>Manhã</option><option>Tarde</option><option>Noite</option></select>
+                    </div>
+                    <div class="flex gap-4 items-center mb-6">
+                        <button id="clear-os-filters-btn" class="bg-gray-200 text-gray-700 font-bold py-3 px-4 rounded-lg hover:bg-gray-300 transition-colors flex items-center gap-2"><i class="fas fa-times"></i> Limpar</button>
+                        <button id="new-os-ai-btn" class="bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"><i class="fas fa-magic"></i> Nova OS</button>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left">
+                            <thead class="bg-gray-100"><tr><th class="p-3 font-semibold">ID</th><th class="p-3 font-semibold">Título</th><th class="p-3 font-semibold">Ativo</th><th class="p-3 font-semibold">Técnico</th><th class="p-3 font-semibold">Turno</th><th class="p-3 font-semibold">Prioridade</th><th class="p-3 font-semibold">Status</th><th class="p-3 font-semibold">Prazo</th><th class="p-3 font-semibold">Conclusão</th><th class="p-3 font-semibold text-center">Ações</th></tr></thead>
+                            <tbody id="os-table-body"></tbody>
+                        </table>
+                    </div>
+                     <div class="flex justify-between items-center mt-6">
+                        <span id="os-count" class="text-sm text-gray-600"></span>
+                        <div id="os-pagination" class="flex gap-2"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Envio de Cronograma View -->
+            <section id="envio-view" class="view-section hidden">
+                <h2 class="text-3xl font-bold text-gray-800 mb-2">Envio de Cronograma</h2>
+                <p class="text-gray-600 mb-8">Selecione os técnicos, status e o período para gerar um cronograma de atividades em PDF.</p>
+                <div class="bg-white p-8 rounded-lg shadow-md max-w-5xl mx-auto">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                        <div>
+                            <h3 class="text-xl font-bold text-gray-700 mb-4">1. Selecione os Técnicos</h3>
+                            <div class="flex items-center pb-2 border-b mb-2">
+                                <input id="export-select-all-techs" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                <label for="export-select-all-techs" class="ml-3 text-sm font-bold text-gray-700">Selecionar Todos</label>
+                            </div>
+                            <div id="export-technicians-list" class="space-y-3 max-h-60 overflow-y-auto p-3 bg-gray-50 rounded-md border">
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-bold text-gray-700 mb-4">2. Selecione o Status</h3>
+                             <div class="flex items-center pb-2 border-b mb-2">
+                                <input id="export-select-all-status" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" checked>
+                                <label for="export-select-all-status" class="ml-3 text-sm font-bold text-gray-700">Selecionar Todos</label>
+                            </div>
+                            <div id="export-status-list" class="space-y-3 max-h-60 overflow-y-auto p-3 bg-gray-50 rounded-md border">
+                            </div>
+                        </div>
+                        <div>
+                            <h3 class="text-xl font-bold text-gray-700 mb-4">3. Selecione o Período</h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label for="export-start-date" class="block text-sm font-medium text-gray-700">Data de Início</label>
+                                    <input type="date" id="export-start-date" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                                </div>
+                                <div>
+                                    <label for="export-end-date" class="block text-sm font-medium text-gray-700">Data Final</label>
+                                    <input type="date" id="export-end-date" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-8 pt-6 border-t">
+                        <button id="export-schedule-btn" class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2 text-lg">
+                            <i class="fas fa-file-pdf"></i> Exportar Cronograma
+                        </button>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Indicadores View -->
+            <section id="indicadores-view" class="view-section hidden">
+                <div class="flex justify-between items-center mb-2">
+                    <h2 class="text-3xl font-bold text-gray-800">Indicadores de Desempenho (KPIs)</h2>
+                    <button id="get-ai-insights-btn" class="bg-purple-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-2"><i class="fas fa-brain"></i> Obter Insights com IA</button>
+                </div>
+                <p class="text-gray-600 mb-8">Analise a fundo a performance da sua operação de manutenção. Estes gráficos mostram tendências históricas de confiabilidade e eficiência, essenciais para a melhoria contínua e para justificar investimentos.</p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                     <div class="bg-white p-6 rounded-lg shadow-md">
+                        <h3 class="text-xl font-bold text-gray-800 mb-4">Desempenho de Conclusão</h3>
+                        <p class="text-gray-600 mb-4">Análise das Ordens de Serviço concluídas dentro do prazo contra as que foram finalizadas com atraso.</p>
+                        <div class="chart-container">
+                            <canvas id="completionPerformanceChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="bg-white p-6 rounded-lg shadow-md">
+                        <h3 class="text-xl font-bold text-gray-800 mb-4">MTBF - Tempo Médio Entre Falhas</h3>
+                        <p class="text-gray-600 mb-4">Este indicador mede a confiabilidade de um ativo. Um MTBF crescente indica que seus equipamentos estão falhando com menos frequência.</p>
+                        <div class="chart-container"><canvas id="mtbfChart"></canvas></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-lg shadow-md">
+                        <h3 class="text-xl font-bold text-gray-800 mb-4">MTTR - Tempo Médio Para Reparo</h3>
+                        <p class="text-gray-600 mb-4">Este indicador mede a eficiência da equipe. Um MTTR decrescente mostra que sua equipe está resolvendo falhas cada vez mais rápido.</p>
+                        <div class="chart-container"><canvas id="mttrChart"></canvas></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-lg shadow-md">
+                        <h3 class="text-xl font-bold text-gray-800 mb-4">Disponibilidade de Ativos (%)</h3>
+                         <p class="text-gray-600 mb-4">Mede o percentual de tempo que um ativo esteve disponível para operar. É um dos principais indicadores do sucesso da manutenção.</p>
+                        <div class="chart-container"><canvas id="availabilityChart"></canvas></div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    
+    <!-- Modals -->
+    <div id="goal-modal" class="modal fixed inset-0 bg-black bg-opacity-50 items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-lg shadow-2xl w-full max-w-sm">
+            <h3 class="text-xl font-bold mb-4">Editar Meta Mensal</h3>
+            <p class="text-gray-600 mb-6">Defina a nova meta de Ordens de Serviço a serem concluídas este mês.</p>
+            <input type="number" id="goal-input" class="w-full p-3 border rounded-lg text-lg" min="1">
+            <div class="flex justify-end gap-4 mt-6">
+                <button id="cancel-goal-btn" class="px-6 py-2 rounded-lg text-gray-700 bg-gray-200 hover:bg-gray-300">Cancelar</button>
+                <button id="save-goal-btn" class="px-6 py-2 rounded-lg text-white bg-blue-600 hover:bg-blue-700">Salvar</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="ai-os-modal" class="modal fixed inset-0 bg-black bg-opacity-50 items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-lg shadow-2xl w-full max-w-2xl transform transition-all">
+            <div id="ai-os-step-1">
+                <h3 class="text-2xl font-bold mb-4 flex items-center gap-3"><i class="fas fa-magic text-blue-500"></i> Gerar OS com Inteligência Artificial</h3>
+                <p class="text-gray-600 mb-6">Descreva o problema de forma simples. A IA irá analisar e criar uma Ordem de Serviço detalhada para você.</p>
+                <textarea id="ai-os-prompt" class="w-full p-3 border rounded-lg text-base" rows="4" placeholder="Ex: A Prensa Hidráulica PH-01 está fazendo um barulho muito alto e vibrando."></textarea>
+                <div class="flex justify-end gap-4 mt-6">
+                    <button id="ai-os-cancel-btn" class="px-6 py-2 rounded-lg text-gray-700 bg-gray-200 hover:bg-gray-300">Cancelar</button>
+                    <button id="ai-os-generate-btn" class="px-6 py-2 rounded-lg text-white bg-blue-600 hover:bg-blue-700 flex items-center gap-2">
+                        <span id="ai-os-generate-btn-text">Gerar OS</span>
+                        <div id="ai-os-spinner" class="spinner hidden" style="width: 20px; height: 20px; border-width: 2px;"></div>
+                    </button>
+                </div>
+            </div>
+            <div id="ai-os-step-2" class="hidden">
+                 <h3 class="text-2xl font-bold mb-4">Revisar e Salvar OS</h3>
+                 <p class="text-gray-600 mb-6">A IA gerou a seguinte Ordem de Serviço. Revise os detalhes e salve.</p>
+                 <div class="space-y-4">
+                    <div><label class="font-bold text-gray-700">Título</label><input type="text" id="ai-os-title" class="w-full p-2 border rounded-md mt-1"></div>
+                    <div><label class="font-bold text-gray-700">Ativo</label><input type="text" id="ai-os-asset" class="w-full p-2 border rounded-md mt-1" placeholder="Nome do Ativo"></div>
+                    <div><label class="font-bold text-gray-700">Descrição Detalhada</label><textarea id="ai-os-description" class="w-full p-2 border rounded-md mt-1" rows="4"></textarea></div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div><label class="font-bold text-gray-700">Prioridade Sugerida</label><select id="ai-os-priority" class="w-full p-2 border rounded-md mt-1 bg-gray-50"><option>Alta</option><option>Média</option><option>Baixa</option></select></div>
+                        <div><label class="font-bold text-gray-700">Atribuir a</label><select id="ai-os-technician" class="w-full p-2 border rounded-md mt-1 bg-gray-50"></select></div>
+                    </div>
+                     <div class="grid grid-cols-2 gap-4">
+                        <div><label class="font-bold text-gray-700">Data de Início</label><input type="date" id="ai-os-start-date" class="w-full p-2 border rounded-md mt-1"></div>
+                        <div><label class="font-bold text-gray-700">Prazo de Conclusão</label><input type="date" id="ai-os-end-date" class="w-full p-2 border rounded-md mt-1"></div>
+                    </div>
+                    <div><label class="font-bold text-gray-700">Turno</label><select id="ai-os-shift" class="w-full p-2 border rounded-md mt-1 bg-gray-50"><option>Manhã</option><option>Tarde</option><option>Noite</option></select></div>
+                    <div><label class="font-bold text-gray-700">Checklist de Diagnóstico</label><div id="ai-os-checklist" class="mt-2 space-y-2"></div></div>
+                 </div>
+                 <div id="ai-os-error" class="text-red-500 mt-4 hidden"></div>
+                 <div class="flex justify-end gap-4 mt-6">
+                    <button id="ai-os-back-btn" class="px-6 py-2 rounded-lg text-gray-700 bg-gray-200 hover:bg-gray-300">Voltar</button>
+                    <button id="ai-os-save-btn" class="px-6 py-2 rounded-lg text-white bg-green-600 hover:bg-green-700">Salvar OS</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="ai-insights-modal" class="modal fixed inset-0 bg-black bg-opacity-50 items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-lg shadow-2xl w-full max-w-lg">
+            <h3 class="text-2xl font-bold mb-4 flex items-center gap-3"><i class="fas fa-brain text-purple-500"></i> Insights da IA sobre KPIs</h3>
+            <div id="ai-insights-content"><div class="flex items-center justify-center h-48"><div class="spinner"></div></div></div>
+            <div class="flex justify-end mt-6"><button id="ai-insights-close-btn" class="px-6 py-2 rounded-lg text-white bg-purple-600 hover:bg-purple-700">Fechar</button></div>
+        </div>
+    </div>
+
+    <div id="os-details-modal" class="modal fixed inset-0 bg-black bg-opacity-50 items-center justify-center z-50 p-4">
+        <div class="bg-white p-6 md:p-8 rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-start">
+                <div>
+                    <h3 class="text-2xl font-bold" id="details-os-title"></h3>
+                    <p class="text-sm text-gray-500" id="details-os-id"></p>
+                </div>
+                <button id="details-os-close-btn" class="text-2xl text-gray-500 hover:text-gray-800">&times;</button>
+            </div>
+            <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="md:col-span-2">
+                    <div class="space-y-6">
+                        <div><h4 class="font-bold text-gray-800 mb-2">Descrição</h4><p class="text-gray-600" id="details-os-description"></p></div>
+                        <div><h4 class="font-bold text-gray-800 mb-2">Checklist</h4><div id="details-os-checklist" class="space-y-2"></div></div>
+                        <div class="bg-slate-50 p-4 rounded-lg">
+                            <h4 class="font-bold text-gray-800 mb-3">Assistente IA</h4>
+                            <div class="flex flex-wrap gap-3">
+                                <button id="ai-troubleshoot-btn" class="flex-1 bg-blue-100 text-blue-800 font-semibold py-2 px-3 rounded-lg hover:bg-blue-200 transition-colors flex items-center justify-center gap-2 text-sm"><i class="fas fa-wrench"></i> ✨ Guia de Solução</button>
+                                <button id="ai-parts-btn" class="flex-1 bg-green-100 text-green-800 font-semibold py-2 px-3 rounded-lg hover:bg-green-200 transition-colors flex items-center justify-center gap-2 text-sm"><i class="fas fa-cogs"></i> ✨ Sugerir Peças</button>
+                                <button id="ai-safety-btn" class="flex-1 bg-amber-100 text-amber-800 font-semibold py-2 px-3 rounded-lg hover:bg-amber-200 transition-colors flex items-center justify-center gap-2 text-sm"><i class="fas fa-shield-alt"></i> ✨ Gerar Segurança</button>
+                            </div>
+                            <div id="ai-assistant-output" class="mt-4 p-4 border rounded-md bg-white min-h-[100px]">
+                                <p class="text-center text-gray-500">Selecione uma opção acima para obter ajuda da IA.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="space-y-4 bg-gray-50 p-4 rounded-lg">
+                    <h4 class="font-bold text-lg border-b pb-2 mb-3">Detalhes</h4>
+                    <div><label for="details-os-status-edit" class="block text-sm font-bold text-gray-500">Status</label><select id="details-os-status-edit" class="w-full p-2 border rounded-md mt-1 bg-white"></select></div>
+                    <div><label for="details-os-technician-edit" class="block text-sm font-bold text-gray-500">Técnico</label><select id="details-os-technician-edit" class="w-full p-2 border rounded-md mt-1 bg-white"></select></div>
+                    <div><label for="details-os-asset-edit" class="block text-sm font-bold text-gray-500">Ativo</label><input type="text" id="details-os-asset-edit" class="w-full p-2 border rounded-md mt-1 bg-white"></div>
+                    <div><label for="details-os-shift-edit" class="block text-sm font-bold text-gray-500">Turno</label><select id="details-os-shift-edit" class="w-full p-2 border rounded-md mt-1 bg-white"></select></div>
+                    <div><strong class="block text-sm font-bold text-gray-500">Prioridade</strong><span id="details-os-priority"></span></div>
+                    <div><strong class="block text-sm font-bold text-gray-500">Tipo</strong><p id="details-os-type" class="font-semibold"></p></div>
+                    <div><label for="details-os-start-date" class="block text-sm font-bold text-gray-500">Data de Início</label><input type="date" id="details-os-start-date" class="w-full p-2 border rounded-md mt-1"></div>
+                    <div><label for="details-os-end-date" class="block text-sm font-bold text-gray-500">Prazo Final</label><input type="date" id="details-os-end-date" class="w-full p-2 border rounded-md mt-1"></div>
+                    <div class="mt-4 pt-4 border-t">
+                        <div class="flex items-center">
+                            <input type="checkbox" id="details-os-completed-checkbox" class="h-5 w-5 rounded border-gray-300 text-green-600 focus:ring-green-500">
+                            <label for="details-os-completed-checkbox" class="ml-3 text-gray-700 font-medium">Marcar como Concluída</label>
+                        </div>
+                        <div id="completion-date-wrapper" class="mt-4 hidden">
+                            <label for="details-os-completion-date" class="block text-sm font-bold text-gray-500">Data de Conclusão</label>
+                            <input type="date" id="details-os-completion-date" class="w-full p-2 border rounded-md mt-1">
+                        </div>
+                    </div>
+                    <button id="details-os-save-btn" class="w-full mt-4 bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2"><i class="fas fa-save"></i> Salvar Alterações</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="delete-confirm-modal" class="modal fixed inset-0 bg-black bg-opacity-50 items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-lg shadow-2xl w-full max-w-sm">
+            <h3 class="text-xl font-bold mb-4">Confirmar Exclusão</h3>
+            <p class="text-gray-600 mb-6">Tem certeza de que deseja excluir esta Ordem de Serviço? Esta ação não pode ser desfeita.</p>
+            <div class="flex justify-end gap-4 mt-6">
+                <button id="delete-cancel-btn" class="px-6 py-2 rounded-lg text-gray-700 bg-gray-200 hover:bg-gray-300">Cancelar</button>
+                <button id="delete-confirm-btn" class="px-6 py-2 rounded-lg text-white bg-red-600 hover:bg-red-700">Excluir</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const { jsPDF } = window.jspdf;
+    const technicians = [ 
+        { id: 1, name: 'Rafael' }, { id: 2, name: 'Erick Campos' }, { id: 3, name: 'Uebster Piloneto' }, { id: 4, name: 'Isaque Dantas' },
+        { id: 5, name: 'Sara' }, { id: 6, name: 'Lucas Tofanini' }
+    ];
+    const today = new Date();
+    let workOrders = [
+        { id: 1, title: 'Verificação de vazamento de óleo', assetName: 'Prensa Hidráulica PH-01', description: 'Realizar inspeção completa em busca de pontos de vazamento de óleo na unidade hidráulica da Prensa PH-01. A pressão parece estar caindo mais rápido que o normal.', technicianId: 1, priority: 'Alta', status: 'Planejada', type: 'Corretiva', shift: 'Manhã', startDate: new Date(today.getFullYear(), today.getMonth(), 2), endDate: new Date(today.getFullYear(), today.getMonth(), 4), completionDate: null, checklist: [{task: 'Inspecionar mangueiras', completed: true}, {task: 'Verificar conexões', completed: false}, {task: 'Checar selos da bomba', completed: false}] },
+        { id: 2, title: 'Inspeção semanal de segurança', assetName: 'Esteira Transportadora ET-03', description: 'Executar checklist de segurança padrão na esteira transportadora.', technicianId: 2, priority: 'Média', status: 'Concluída', type: 'Preventiva', shift: 'Tarde', startDate: new Date(today.getFullYear(), today.getMonth(), 5), endDate: new Date(today.getFullYear(), today.getMonth(), 5), completionDate: new Date(today.getFullYear(), today.getMonth(), 5), checklist: [] },
+        { id: 3, title: 'Troca de filtro de ar', assetName: 'Compressor de Ar CA-05', description: 'Substituir o filtro de ar do compressor CA-05 conforme plano de manutenção.', technicianId: 3, priority: 'Média', status: 'Em Andamento', type: 'Preventiva', shift: 'Noite', startDate: new Date(today.getFullYear(), today.getMonth(), 8), endDate: new Date(today.getFullYear(), today.getMonth(), 10), completionDate: null, checklist: [] },
+        { id: 4, title: 'Reparo no disjuntor principal', assetName: 'Painel de Controle PC-08', description: 'Diagnosticar e reparar falha no disjuntor principal do painel PC-08, que está desarmando aleatoriamente.', technicianId: 4, priority: 'Alta', status: 'Em Andamento', type: 'Corretiva', shift: 'Manhã', startDate: new Date(today.getFullYear(), today.getMonth(), 9), endDate: new Date(today.getFullYear(), today.getMonth(), 11), completionDate: null, checklist: [] },
+        { id: 5, title: 'Lubrificação de rolamentos', assetName: 'Motor Elétrico ME-12', description: 'Realizar lubrificação dos rolamentos do motor ME-12.', technicianId: 5, priority: 'Baixa', status: 'Planejada', type: 'Preventiva', shift: 'Tarde', startDate: new Date(today.getFullYear(), today.getMonth(), 12), endDate: new Date(today.getFullYear(), today.getMonth(), 12), completionDate: null, checklist: [] },
+        { id: 6, title: 'Calibração de sensores de pressão', assetName: 'Prensa Hidráulica PH-01', description: 'Aferir e calibrar os sensores de pressão da Prensa PH-01.', technicianId: 6, priority: 'Média', status: 'Planejada', type: 'Preventiva', shift: 'Manhã', startDate: new Date(today.getFullYear(), today.getMonth(), 14), endDate: new Date(today.getFullYear(), today.getMonth(), 15), completionDate: null, checklist: [] },
+        { id: 7, title: 'Motor com ruído estranho', assetName: 'Motor Elétrico ME-12', description: 'Diagnosticar a causa do ruído anormal, similar a um assobio agudo, vindo do motor ME-12, principalmente em alta rotação.', technicianId: 1, priority: 'Alta', status: 'Aguardando Peças', type: 'Corretiva', shift: 'Tarde', startDate: new Date(today.getFullYear(), today.getMonth(), 6), endDate: new Date(today.getFullYear(), today.getMonth(), 9), completionDate: null, checklist: [] },
+    ];
+    
+    let monthlyGoal = 10;
+    let charts = {};
+    let currentOsPage = 1;
+    const osPerPage = 7;
+    const apiKey = ""; 
+    let currentOs = null;
+    let osToDeleteId = null;
+
+    const sidebar = document.getElementById('sidebar');
+    const hamburgerBtn = document.getElementById('hamburger-btn');
+    const sidebarLinks = document.querySelectorAll('.sidebar-link');
+    const viewSections = document.querySelectorAll('.view-section');
+    const navFilterLinks = document.querySelectorAll('.nav-filter-link');
+
+    hamburgerBtn.addEventListener('click', () => {
+        sidebar.classList.toggle('sidebar-open');
+    });
+
+    function navigateTo(hash, filterData = null) { if (!hash) hash = '#dashboard'; sidebarLinks.forEach(link => link.classList.toggle('active', link.getAttribute('href') === hash)); viewSections.forEach(section => section.classList.toggle('hidden', '#' + section.id !== hash + '-view')); if (hash === '#ordens' && filterData) { sessionStorage.setItem('osFilter', JSON.stringify(filterData)); } else if (hash !== '#ordens') { sessionStorage.removeItem('osFilter'); } renderActiveViewCharts(hash); sidebar.classList.remove('sidebar-open'); }
+    sidebarLinks.forEach(link => { link.addEventListener('click', e => { e.preventDefault(); if (link.getAttribute('href') === '#ordens') { resetOsFilters(); } window.location.hash = link.getAttribute('href'); }); });
+    navFilterLinks.forEach(link => { link.addEventListener('click', (e) => { e.preventDefault(); navigateTo(link.getAttribute('href'), { status: link.dataset.filter }); }); });
+    window.addEventListener('hashchange', () => navigateTo(window.location.hash));
+
+    const statusColors = { 'Atrasada': 'var(--danger)', 'Concluída': 'var(--success)', 'Em Andamento': 'var(--primary)', 'Planejada': 'var(--secondary)', 'Aguardando Peças': 'var(--warning)' };
+    const statusList = ['Planejada', 'Em Andamento', 'Aguardando Peças'];
+    const shiftList = ['Manhã', 'Tarde', 'Noite'];
+    const priorityBadge = (priority) => `<span class="px-2 py-1 text-xs font-medium rounded-full ${{'Alta': 'bg-red-100 text-red-800', 'Média': 'bg-amber-100 text-amber-800', 'Baixa': 'bg-gray-100 text-gray-800'}[priority] || 'bg-gray-100 text-gray-800'}">${priority}</span>`;
+    const statusBadge = (status) => `<span class="px-2 py-1 text-xs font-semibold rounded-full ${{'Atrasada': 'bg-red-100 text-red-800', 'Concluída': 'bg-green-100 text-green-800', 'Em Andamento': 'bg-blue-100 text-blue-800', 'Planejada': 'bg-gray-100 text-gray-800', 'Aguardando Peças': 'bg-yellow-100 text-yellow-800'}[status] || 'bg-gray-100 text-gray-800'}">${status}</span>`;
+    const formatDate = (date) => date.toLocaleDateString('pt-BR');
+    const toInputDate = (date) => date.toISOString().split('T')[0];
+
+    function hexToRgba(hex, alpha) {
+        let r = 0, g = 0, b = 0;
+        if (hex.length === 4) {
+            r = "0x" + hex[1] + hex[1];
+            g = "0x" + hex[2] + hex[2];
+            b = "0x" + hex[3] + hex[3];
+        } else if (hex.length === 7) {
+            r = "0x" + hex[1] + hex[2];
+            g = "0x" + hex[3] + hex[4];
+            b = "0x" + hex[5] + hex[6];
+        }
+        return `rgba(${+r},${+g},${+b},${alpha})`;
+    }
+    
+    function createGradient(ctx, colorVar) {
+        const colorHex = getComputedStyle(document.documentElement).getPropertyValue(colorVar).trim();
+        const gradient = ctx.createLinearGradient(0, 0, 500, 0); 
+        gradient.addColorStop(0, hexToRgba(colorHex, 0.85));
+        gradient.addColorStop(1, hexToRgba(colorHex, 0.5));
+        return gradient;
+    }
+
+    function updateOverdueStatus() {
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        workOrders.forEach(os => {
+            if (os.status !== 'Concluída' && os.status !== 'Aguardando Peças') {
+                const endDate = new Date(os.endDate);
+                endDate.setHours(23, 59, 59, 999);
+                if (endDate < now) {
+                    os.status = 'Atrasada';
+                }
+            }
+        });
+    }
+
+    function init() { updateOverdueStatus(); populateFilters(); updateAllKpis(); renderOsTable(); initExportView(); navigateTo(window.location.hash || '#dashboard'); }
+    function renderActiveViewCharts(hash) { updateOverdueStatus(); if(hash === '#dashboard' || !hash) { renderMonthlyGoalChart(); renderParetoChart(); } if(hash === '#cronograma') { renderGanttChart(); } if(hash === '#indicadores') { renderKpiCharts(); } if (hash === '#ordens') { const storedFilter = sessionStorage.getItem('osFilter'); if (storedFilter) { const filter = JSON.parse(storedFilter); if (filter.status) document.getElementById('os-filter-status').value = filter.status; if (filter.completion) renderOsTable(filter.completion); else renderOsTable(); sessionStorage.removeItem('osFilter'); } else { renderOsTable(); } } }
+    function updateAllKpis() { const now = new Date(); const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1); const next7days = new Date(); next7days.setDate(now.getDate() + 7); document.getElementById('kpi-atrasadas').textContent = workOrders.filter(os => os.status === 'Atrasada').length; document.getElementById('kpi-andamento').textContent = workOrders.filter(os => os.status === 'Em Andamento').length; document.getElementById('kpi-concluidas-mes').textContent = workOrders.filter(os => os.status === 'Concluída' && os.completionDate >= startOfMonth).length; document.getElementById('kpi-preventivas').textContent = workOrders.filter(os => os.type === 'Preventiva' && os.startDate > now && os.startDate <= next7days).length; }
+    function renderMonthlyGoalChart() { const completedThisMonth = workOrders.filter(os => os.status === 'Concluída' && os.completionDate && os.completionDate.getMonth() === today.getMonth()).length; document.getElementById('goal-progress-text').textContent = `${completedThisMonth} / ${monthlyGoal}`; const ctx = document.getElementById('monthlyGoalChart').getContext('2d'); if (charts.monthlyGoal) charts.monthlyGoal.destroy(); const progress = Math.min((completedThisMonth / monthlyGoal) * 100, 100); const primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim(); const primaryLightColor = getComputedStyle(document.documentElement).getPropertyValue('--primary-light').trim(); const progressGradient = ctx.createLinearGradient(0, 0, 0, 150); progressGradient.addColorStop(0, primaryLightColor); progressGradient.addColorStop(1, primaryColor); charts.monthlyGoal = new Chart(ctx, { type: 'doughnut', data: { labels: ['Progresso', 'Restante'], datasets: [{ data: [progress, 100 - progress], backgroundColor: [progressGradient, '#e9ecef'], borderColor: 'var(--card-bg)', borderWidth: 4, circumference: 180, rotation: 270 }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '75%', plugins: { legend: { display: false }, tooltip: { enabled: false } } } }); }
+    const goalModal = document.getElementById('goal-modal'); document.getElementById('edit-goal-btn').addEventListener('click', () => { document.getElementById('goal-input').value = monthlyGoal; goalModal.classList.add('show'); }); document.getElementById('cancel-goal-btn').addEventListener('click', () => goalModal.classList.remove('show')); document.getElementById('save-goal-btn').addEventListener('click', () => { const newGoal = parseInt(document.getElementById('goal-input').value); if (newGoal > 0) { monthlyGoal = newGoal; renderMonthlyGoalChart(); goalModal.classList.remove('show'); } });
+    function renderParetoChart() { const failureCounts = workOrders.filter(os => os.type === 'Corretiva').reduce((acc, os) => { const assetName = os.assetName || 'Desconhecido'; acc[assetName] = (acc[assetName] || 0) + 1; return acc; }, {}); const sortedFailures = Object.entries(failureCounts).sort(([,a],[,b]) => b-a); const labels = sortedFailures.map(([name]) => name); const data = sortedFailures.map(([,count]) => count); const totalFailures = data.reduce((sum, value) => sum + value, 0); let cumulativePercentage = 0; const paretoData = data.map(value => { cumulativePercentage += (value / totalFailures) * 100; return cumulativePercentage; }); const ctx = document.getElementById('paretoChart').getContext('2d'); if (charts.pareto) charts.pareto.destroy(); const primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim(); const barGradient = ctx.createLinearGradient(0, 0, 0, 300); barGradient.addColorStop(0, hexToRgba(primaryColor, 0.8)); barGradient.addColorStop(1, hexToRgba(primaryColor, 0.4)); charts.pareto = new Chart(ctx, { type: 'bar', data: { labels: labels, datasets: [ { label: 'Nº de Falhas', data: data, backgroundColor: barGradient, yAxisID: 'y', borderRadius: 6 }, { label: 'Cumulativo %', data: paretoData, type: 'line', borderColor: 'var(--danger)', backgroundColor: 'transparent', yAxisID: 'y1', tension: 0.4, pointRadius: 4, pointBackgroundColor: 'var(--danger)' } ] }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { display: false } }, y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'Nº de Falhas' }, beginAtZero: true, grid: { color: '#e5e7eb', borderDash: [2, 4] } }, y1: { type: 'linear', display: true, position: 'right', min: 0, max: 100, title: { display: true, text: 'Percentual Cumulativo (%)' }, grid: { drawOnChartArea: false } } }, plugins: { legend: { position: 'top' } } } }); }
+    function populateFilters() { const techFilter = document.getElementById('gantt-filter-technician'); const aiTechFilter = document.getElementById('ai-os-technician'); const detailsTechFilter = document.getElementById('details-os-technician-edit'); technicians.forEach(t => { const option = document.createElement('option'); option.value = t.id; option.textContent = t.name; techFilter.appendChild(option.cloneNode(true)); aiTechFilter.appendChild(option.cloneNode(true)); detailsTechFilter.appendChild(option); }); }
+    function renderGanttChart() { const techFilter = document.getElementById('gantt-filter-technician').value; const statusFilter = document.getElementById('gantt-filter-status').value; let filteredData = workOrders.filter(os => (techFilter === 'all' || os.technicianId == techFilter) && (statusFilter === 'all' || os.status === statusFilter)); filteredData.sort((a,b) => a.startDate - b.startDate); const ctx = document.getElementById('ganttChart').getContext('2d'); if (charts.gantt) charts.gantt.destroy(); const statusGradients = { 'Atrasada': createGradient(ctx, '--danger'), 'Concluída': createGradient(ctx, '--success'), 'Em Andamento': createGradient(ctx, '--primary'), 'Planejada': createGradient(ctx, '--secondary'), 'Aguardando Peças': createGradient(ctx, '--warning') }; charts.gantt = new Chart(ctx, { type: 'bar', data: { labels: filteredData.map(os => `${os.id}: ${os.title}`), datasets: [{ label: 'Duração da OS', data: filteredData.map(os => [os.startDate, os.endDate]), backgroundColor: filteredData.map(os => statusGradients[os.status] || statusGradients['Planejada']), barPercentage: 0.5, borderRadius: 6, osIds: filteredData.map(os => os.id) }] }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, onClick: (e) => { const activePoints = charts.gantt.getElementsAtEventForMode(e, 'nearest', { intersect: true }, true); if (activePoints.length > 0) { const osId = charts.gantt.data.datasets[activePoints[0].datasetIndex].osIds[activePoints[0].index]; currentOs = workOrders.find(os => os.id === osId); if (currentOs) { populateOsDetailsModal(currentOs); osDetailsModal.classList.add('show'); } } }, onHover: (e, chartElement) => { e.native.target.style.cursor = chartElement[0] ? 'pointer' : 'default'; }, scales: { x: { type: 'time', time: { unit: 'day', tooltipFormat: 'dd/MM/yyyy' }, min: new Date(today.getFullYear(), today.getMonth(), 1), max: new Date(today.getFullYear(), today.getMonth() + 1, 0), title: { display: true, text: 'Data' }, grid: { color: '#e5e7eb', borderDash: [2, 4] } } }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(context) { const os = filteredData[context.dataIndex]; const tech = technicians.find(t => t.id === os.technicianId)?.name; return [`Técnico: ${tech}`, `Status: ${os.status}`, `Início: ${formatDate(os.startDate)}`, `Fim: ${formatDate(os.endDate)}`]; } } } } } }); }
+    document.getElementById('gantt-filter-technician').addEventListener('change', renderGanttChart); document.getElementById('gantt-filter-status').addEventListener('change', renderGanttChart);
+    function renderOsTable(completionFilter = null) { const searchTerm = document.getElementById('os-search').value.toLowerCase(); const statusFilter = document.getElementById('os-filter-status').value; const priorityFilter = document.getElementById('os-filter-priority').value; const shiftFilter = document.getElementById('os-filter-shift').value; const assetFilter = document.getElementById('os-filter-asset').value.toLowerCase(); const filteredData = workOrders.filter(os => { const assetName = os.assetName.toLowerCase() || ''; let completionMatch = true; if (completionFilter) { if (os.status !== 'Concluída') { completionMatch = false; } else { const isOnTime = os.completionDate <= os.endDate; if (completionFilter === 'onTime' && !isOnTime) completionMatch = false; if (completionFilter === 'late' && isOnTime) completionMatch = false; } } return (os.title.toLowerCase().includes(searchTerm)) && (assetFilter === '' || assetName.includes(assetFilter)) && (statusFilter === 'all' || os.status === statusFilter) && (priorityFilter === 'all' || os.priority === priorityFilter) && (shiftFilter === 'all' || os.shift === shiftFilter) && completionMatch; }); const tableBody = document.getElementById('os-table-body'); tableBody.innerHTML = ''; document.getElementById('os-count').textContent = `Mostrando ${filteredData.length} de ${workOrders.length} ordens de serviço.`; const paginatedData = filteredData.slice((currentOsPage - 1) * osPerPage, currentOsPage * osPerPage); if (paginatedData.length === 0) { tableBody.innerHTML = `<tr><td colspan="10" class="text-center p-6 text-gray-500">Nenhuma ordem de serviço encontrada.</td></tr>`; renderOsPagination(0,0); return; } paginatedData.forEach(os => { const row = document.createElement('tr'); row.className = 'border-b hover:bg-gray-50'; row.dataset.osId = os.id; const techName = technicians.find(t => t.id === os.technicianId)?.name || 'N/A'; row.innerHTML = `<td class="p-3 font-mono text-sm text-gray-500">${os.id.toString().padStart(4, '0')}</td><td class="p-3 font-semibold">${os.title}</td><td class="p-3 text-gray-600">${os.assetName}</td><td class="p-3 text-gray-600">${techName}</td><td class="p-3 text-gray-600">${os.shift}</td><td class="p-3">${priorityBadge(os.priority)}</td><td class="p-3">${statusBadge(os.status)}</td><td class="p-3 text-gray-600">${formatDate(os.endDate)}</td><td class="p-3 text-gray-600">${os.completionDate ? formatDate(os.completionDate) : '-'}</td><td class="p-3 text-center"><button class="delete-os-btn text-gray-400 hover:text-red-600" data-os-id="${os.id}"><i class="fas fa-trash-alt"></i></button></td>`; tableBody.appendChild(row); }); renderOsPagination(filteredData.length, osPerPage); }
+    function renderOsPagination(totalItems, itemsPerPage) { const paginationContainer = document.getElementById('os-pagination'); paginationContainer.innerHTML = ''; const totalPages = Math.ceil(totalItems / itemsPerPage); if(totalPages <= 1) return; for (let i = 1; i <= totalPages; i++) { const button = document.createElement('button'); button.textContent = i; button.className = `px-3 py-1 border rounded-md text-sm ${i === currentOsPage ? 'bg-blue-600 text-white' : 'bg-white hover:bg-gray-100'}`; button.addEventListener('click', () => { currentOsPage = i; renderOsTable(); }); paginationContainer.appendChild(button); } }
+    document.getElementById('os-search').addEventListener('input', () => { currentOsPage = 1; renderOsTable(); }); document.getElementById('os-filter-asset').addEventListener('input', () => { currentOsPage = 1; renderOsTable(); }); document.getElementById('os-filter-status').addEventListener('change', () => { currentOsPage = 1; renderOsTable(); }); document.getElementById('os-filter-priority').addEventListener('change', () => { currentOsPage = 1; renderOsTable(); }); document.getElementById('os-filter-shift').addEventListener('change', () => { currentOsPage = 1; renderOsTable(); });
+    function renderKpiCharts() { const kpiLabels = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun']; const mtbfData = [320, 340, 365, 350, 380, 400]; const mttrData = [4.5, 4.2, 4.3, 3.8, 3.5, 3.2]; const availabilityData = [92, 93, 93.5, 95, 96, 96.8]; renderLineChart('mtbfChart', 'MTBF (horas)', kpiLabels, mtbfData, '--primary'); renderLineChart('mttrChart', 'MTTR (horas)', kpiLabels, mttrData, '--danger'); renderLineChart('availabilityChart', 'Disponibilidade (%)', kpiLabels, availabilityData, '--success'); renderCompletionPerformanceChart(); }
+    function renderLineChart(id, label, labels, data, colorVar) { const ctx = document.getElementById(id).getContext('2d'); if (charts[id]) charts[id].destroy(); const colorHex = getComputedStyle(document.documentElement).getPropertyValue(colorVar).trim(); const gradient = ctx.createLinearGradient(0, 0, 0, 300); gradient.addColorStop(0, hexToRgba(colorHex, 0.5)); gradient.addColorStop(1, hexToRgba(colorHex, 0.02)); charts[id] = new Chart(ctx, { type: 'line', data: { labels, datasets: [{ label, data, borderColor: colorHex, backgroundColor: gradient, fill: true, tension: 0.4, pointBackgroundColor: colorHex, pointBorderColor: '#fff', pointHoverRadius: 7 }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: false, grid: { color: '#e5e7eb', borderDash: [2, 4] } }, x: { grid: { display: false }} }, plugins: { legend: { display: false } } } }); }
+    function renderBarChart(id, label, labels, data, colorVar) { const ctx = document.getElementById(id).getContext('2d'); if (charts[id]) charts[id].destroy(); const colorHex = getComputedStyle(document.documentElement).getPropertyValue(colorVar).trim(); charts[id] = new Chart(ctx, { type: 'bar', data: { labels, datasets: [{ label, data, backgroundColor: colorHex, borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, grid: { color: '#e5e7eb', borderDash: [2, 4] } }, x: { grid: { display: false }} }, plugins: { legend: { display: false } } } }); }
+    function renderCompletionPerformanceChart() { const completedOnTime = workOrders.filter(os => os.status === 'Concluída' && os.completionDate <= os.endDate).length; const completedLate = workOrders.filter(os => os.status === 'Concluída' && os.completionDate > os.endDate).length; const totalCompleted = completedOnTime + completedLate; const onTimePercentage = totalCompleted > 0 ? ((completedOnTime / totalCompleted) * 100).toFixed(1) : 0; const ctx = document.getElementById('completionPerformanceChart').getContext('2d'); if (charts.completion) charts.completion.destroy(); const successColor = getComputedStyle(document.documentElement).getPropertyValue('--success').trim(); const dangerColor = getComputedStyle(document.documentElement).getPropertyValue('--danger').trim(); const successGradient = ctx.createLinearGradient(0, 0, 0, 300); successGradient.addColorStop(0, hexToRgba(successColor, 0.9)); successGradient.addColorStop(1, hexToRgba(successColor, 0.5)); const dangerGradient = ctx.createLinearGradient(0, 0, 0, 300); dangerGradient.addColorStop(0, hexToRgba(dangerColor, 0.9)); dangerGradient.addColorStop(1, hexToRgba(dangerColor, 0.5)); charts.completion = new Chart(ctx, { type: 'doughnut', data: { labels: [`No Prazo (${completedOnTime})`, `Com Atraso (${completedLate})`], datasets: [{ data: [completedOnTime, completedLate], backgroundColor: [successGradient, dangerGradient], borderColor: 'var(--card-bg)', borderWidth: 4, hoverBorderWidth: 6 }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '80%', onClick: (e, elements) => { if (elements.length > 0) { const i = elements[0].index; const filterType = charts.completion.data.labels[i].startsWith('No Prazo') ? 'onTime' : 'late'; navigateTo('#ordens', { completion: filterType, status: 'Concluída' }); } }, onHover: (e, chartElement) => { e.native.target.style.cursor = chartElement[0] ? 'pointer' : 'default'; }, plugins: { legend: { position: 'bottom', labels: { padding: 20, usePointStyle: true, pointStyle: 'circle' } }, tooltip: { bodyFont: { size: 14 }, callbacks: { label: function(context) { return `${context.label}: ${context.raw}`; } } } } }, plugins: [{ id: 'doughnut-center-text', afterDraw: (chart) => { const {ctx, width, height} = chart; ctx.restore(); const fontSize = (height / 200).toFixed(2); ctx.font = `bold ${fontSize}em sans-serif`; ctx.textBaseline = 'middle'; const text = `${onTimePercentage}%`; const textX = Math.round((width - ctx.measureText(text).width) / 2); const textY = height / 2 - 10; ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-primary').trim(); ctx.fillText(text, textX, textY); ctx.save(); const subText = 'No Prazo'; const subfontSize = (height / 280).toFixed(2); ctx.font = `${subfontSize}em sans-serif`; const subtextX = Math.round((width - ctx.measureText(subText).width) / 2); const subtextY = height / 2 + 15; ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim(); ctx.fillText(subText, subtextX, subtextY); ctx.save(); } }] }); }
+
+    const aiOsModal = document.getElementById('ai-os-modal'); const aiOsStep1 = document.getElementById('ai-os-step-1'); const aiOsStep2 = document.getElementById('ai-os-step-2');
+    document.getElementById('new-os-ai-btn').addEventListener('click', () => { document.getElementById('ai-os-start-date').value = toInputDate(new Date()); document.getElementById('ai-os-end-date').value = toInputDate(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)); aiOsModal.classList.add('show'); }); document.getElementById('ai-os-cancel-btn').addEventListener('click', () => { aiOsModal.classList.remove('show'); resetAiOsModal(); }); document.getElementById('ai-os-back-btn').addEventListener('click', () => { aiOsStep2.classList.add('hidden'); aiOsStep1.classList.remove('hidden'); });
+    document.getElementById('ai-os-generate-btn').addEventListener('click', async () => { const promptText = document.getElementById('ai-os-prompt').value; if (!promptText.trim()) { alert('Por favor, descreva o problema.'); return; } setAiOsLoading(true); const prompt = `Você é um especialista em gerenciamento de manutenção industrial. Um operador relatou o seguinte problema: "${promptText}". Com base nisso, gere uma Ordem de Serviço (OS) estruturada em formato JSON. O JSON deve conter: 'title' (um título claro e técnico para a OS), 'description' (um parágrafo detalhando o problema e o objetivo da OS), 'priority' (classifique como 'Alta', 'Média' ou 'Baixa' com base na urgência implícita), e 'checklist' (uma array de objetos, onde cada objeto tem uma chave 'task' com uma etapa de diagnóstico inicial). Responda apenas com o JSON.`; try { const result = await callGemini(prompt); const cleanJsonString = result.replace(/```json|```/g, '').trim(); const aiResponse = JSON.parse(cleanJsonString); populateAiOsForm(aiResponse); aiOsStep1.classList.add('hidden'); aiOsStep2.classList.remove('hidden'); } catch (error) { console.error("Error parsing Gemini response:", error); document.getElementById('ai-os-error').textContent = 'Ocorreu um erro ao gerar a OS. Tente novamente.'; document.getElementById('ai-os-error').classList.remove('hidden'); } finally { setAiOsLoading(false); } });
+    document.getElementById('ai-os-save-btn').addEventListener('click', () => { const newOs = { id: Math.max(...workOrders.map(o => o.id)) + 1, title: document.getElementById('ai-os-title').value, assetName: document.getElementById('ai-os-asset').value, description: document.getElementById('ai-os-description').value, priority: document.getElementById('ai-os-priority').value, technicianId: parseInt(document.getElementById('ai-os-technician').value), shift: document.getElementById('ai-os-shift').value, status: 'Planejada', type: 'Corretiva', startDate: new Date(document.getElementById('ai-os-start-date').value + 'T00:00:00'), endDate: new Date(document.getElementById('ai-os-end-date').value + 'T00:00:00'), completionDate: null, checklist: Array.from(document.querySelectorAll('#ai-os-checklist .flex')).map(item => ({ task: item.querySelector('label').textContent, completed: false })) }; workOrders.unshift(newOs); renderOsTable(); updateAllKpis(); aiOsModal.classList.remove('show'); resetAiOsModal(); });
+    function setAiOsLoading(isLoading) { document.getElementById('ai-os-generate-btn-text').classList.toggle('hidden', isLoading); document.getElementById('ai-os-spinner').classList.toggle('hidden', !isLoading); document.getElementById('ai-os-generate-btn').disabled = isLoading; }
+    function resetAiOsModal() { document.getElementById('ai-os-prompt').value = ''; aiOsStep1.classList.remove('hidden'); aiOsStep2.classList.add('hidden'); document.getElementById('ai-os-error').classList.add('hidden'); }
+    function populateAiOsForm(data) { document.getElementById('ai-os-title').value = data.title || ''; document.getElementById('ai-os-description').value = data.description || ''; document.getElementById('ai-os-priority').value = data.priority || 'Média'; const checklistContainer = document.getElementById('ai-os-checklist'); checklistContainer.innerHTML = ''; if (data.checklist && Array.isArray(data.checklist)) { data.checklist.forEach(item => { const div = document.createElement('div'); div.className = 'flex items-center gap-2 bg-gray-100 p-2 rounded'; div.innerHTML = `<input type="checkbox" disabled class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"><label class="text-gray-700">${item.task}</label>`; checklistContainer.appendChild(div); }); } }
+    const aiInsightsModal = document.getElementById('ai-insights-modal'); document.getElementById('get-ai-insights-btn').addEventListener('click', async () => { aiInsightsModal.classList.add('show'); document.getElementById('ai-insights-content').innerHTML = '<div class="flex items-center justify-center h-48"><div class="spinner"></div></div>'; const mtbfData = charts.mtbfChart.data.datasets[0].data; const mttrData = charts.mttrChart.data.datasets[0].data; const failureCounts = workOrders.filter(os => os.type === 'Corretiva').reduce((acc, os) => { const assetName = os.assetName || 'Desconhecido'; acc[assetName] = (acc[assetName] || 0) + 1; return acc; }, {}); const topFailingAssets = Object.entries(failureCounts).sort(([,a],[,b]) => b-a).slice(0, 3).map(([name, count]) => `${name} (${count} falhas)`).join(', '); const prompt = `Você é um analista de dados especialista em manutenção. Analise os seguintes KPIs e forneça um resumo conciso em HTML (use parágrafos <p> e listas <ul><li>) com insights e uma recomendação acionável. Dados: Tendência de MTBF (horas) nos últimos 6 meses: ${mtbfData.join(', ')}. Tendência de MTTR (horas) nos últimos 6 meses: ${mttrData.join(', ')}. Ativos com mais falhas corretivas: ${topFailingAssets || 'Nenhum'}.`; try { const result = await callGemini(prompt); document.getElementById('ai-insights-content').innerHTML = `<div class="prose max-w-none">${result}</div>`; } catch (error) { console.error("Error getting AI insights:", error); document.getElementById('ai-insights-content').innerHTML = `<p class="text-red-500">Ocorreu um erro ao obter os insights. Tente novamente.</p>`; } }); document.getElementById('ai-insights-close-btn').addEventListener('click', () => aiInsightsModal.classList.remove('show'));
+    
+    const osDetailsModal = document.getElementById('os-details-modal');
+    const deleteConfirmModal = document.getElementById('delete-confirm-modal');
+    document.getElementById('os-table-body').addEventListener('click', (e) => {
+        const deleteBtn = e.target.closest('.delete-os-btn');
+        if (deleteBtn) {
+            e.stopPropagation();
+            osToDeleteId = parseInt(deleteBtn.dataset.osId);
+            deleteConfirmModal.classList.add('show');
+            return;
+        }
+        const row = e.target.closest('tr'); 
+        if (row && row.dataset.osId) { 
+            const osId = parseInt(row.dataset.osId); 
+            currentOs = workOrders.find(os => os.id === osId); 
+            if (currentOs) { populateOsDetailsModal(currentOs); osDetailsModal.classList.add('show'); } 
+        } 
+    });
+    document.getElementById('details-os-close-btn').addEventListener('click', () => osDetailsModal.classList.remove('show'));
+    document.getElementById('delete-cancel-btn').addEventListener('click', () => deleteConfirmModal.classList.remove('show'));
+    document.getElementById('delete-confirm-btn').addEventListener('click', () => {
+        if (osToDeleteId !== null) {
+            workOrders = workOrders.filter(os => os.id !== osToDeleteId);
+            osToDeleteId = null;
+            deleteConfirmModal.classList.remove('show');
+            renderOsTable();
+            updateAllKpis();
+            if (window.location.hash === '#cronograma') renderGanttChart();
+            if (window.location.hash === '#dashboard') renderParetoChart();
+            if (window.location.hash === '#indicadores') renderCompletionPerformanceChart();
+        }
+    });
+    
+    function populateOsDetailsModal(os) {
+        document.getElementById('details-os-title').textContent = os.title;
+        document.getElementById('details-os-id').textContent = `OS #${os.id.toString().padStart(4, '0')}`;
+        document.getElementById('details-os-description').textContent = os.description;
+        document.getElementById('details-os-asset-edit').value = os.assetName;
+        
+        const statusSelect = document.getElementById('details-os-status-edit');
+        statusSelect.innerHTML = '';
+        statusList.forEach(status => {
+            const option = document.createElement('option');
+            option.value = status;
+            option.textContent = status;
+            statusSelect.appendChild(option);
+        });
+        statusSelect.value = (os.status === 'Concluída' || os.status === 'Atrasada') ? 'Planejada' : os.status;
+        statusSelect.disabled = (os.status === 'Concluída' || os.status === 'Atrasada');
+
+        const techSelect = document.getElementById('details-os-technician-edit');
+        techSelect.innerHTML = '';
+        technicians.forEach(tech => {
+            const option = document.createElement('option');
+            option.value = tech.id;
+            option.textContent = tech.name;
+            techSelect.appendChild(option);
+        });
+        techSelect.value = os.technicianId;
+
+        const shiftSelect = document.getElementById('details-os-shift-edit');
+        shiftSelect.innerHTML = '';
+        shiftList.forEach(shift => {
+            const option = document.createElement('option');
+            option.value = shift;
+            option.textContent = shift;
+            shiftSelect.appendChild(option);
+        });
+        shiftSelect.value = os.shift;
+
+        document.getElementById('details-os-priority').innerHTML = priorityBadge(os.priority);
+        document.getElementById('details-os-type').textContent = os.type;
+        document.getElementById('details-os-start-date').value = toInputDate(os.startDate);
+        document.getElementById('details-os-end-date').value = toInputDate(os.endDate);
+        
+        const completedCheckbox = document.getElementById('details-os-completed-checkbox');
+        const completionDateWrapper = document.getElementById('completion-date-wrapper');
+        const completionDateInput = document.getElementById('details-os-completion-date');
+        
+        completedCheckbox.checked = os.status === 'Concluída';
+        completedCheckbox.disabled = os.status === 'Concluída';
+
+        if (os.status === 'Concluída') {
+            completionDateWrapper.classList.remove('hidden');
+            completionDateInput.value = os.completionDate ? toInputDate(os.completionDate) : toInputDate(new Date());
+        } else {
+            completionDateWrapper.classList.add('hidden');
+        }
+
+        const checklistContainer = document.getElementById('details-os-checklist');
+        checklistContainer.innerHTML = '';
+        if (os.checklist && os.checklist.length > 0) {
+            os.checklist.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'flex items-center gap-2';
+                div.innerHTML = `<input type="checkbox" ${item.completed ? 'checked' : ''} class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"><label class="${item.completed ? 'line-through text-gray-500' : ''}">${item.task}</label>`;
+                checklistContainer.appendChild(div);
+            });
+        } else {
+            checklistContainer.innerHTML = '<p class="text-gray-500 text-sm">Nenhum checklist para esta OS.</p>';
+        }
+        document.getElementById('ai-assistant-output').innerHTML = '<p class="text-center text-gray-500">Selecione uma opção acima para obter ajuda da IA.</p>';
+    }
+
+    document.getElementById('details-os-completed-checkbox').addEventListener('change', (e) => {
+        const completionDateWrapper = document.getElementById('completion-date-wrapper');
+        const completionDateInput = document.getElementById('details-os-completion-date');
+        const statusSelect = document.getElementById('details-os-status-edit');
+        if (e.target.checked) {
+            completionDateWrapper.classList.remove('hidden');
+            completionDateInput.value = toInputDate(new Date());
+            statusSelect.disabled = true;
+        } else {
+            completionDateWrapper.classList.add('hidden');
+            statusSelect.disabled = false;
+        }
+    });
+
+    document.getElementById('details-os-save-btn').addEventListener('click', () => {
+        if (!currentOs) return;
+        const osIndex = workOrders.findIndex(os => os.id === currentOs.id);
+        if (osIndex !== -1) {
+            const completedCheckbox = document.getElementById('details-os-completed-checkbox');
+            if (completedCheckbox.checked) {
+                workOrders[osIndex].status = 'Concluída';
+                workOrders[osIndex].completionDate = new Date(document.getElementById('details-os-completion-date').value + 'T00:00:00');
+            } else {
+                if(currentOs.status !== 'Atrasada'){
+                    workOrders[osIndex].status = document.getElementById('details-os-status-edit').value;
+                }
+                workOrders[osIndex].completionDate = null;
+            }
+
+            workOrders[osIndex].technicianId = parseInt(document.getElementById('details-os-technician-edit').value);
+            workOrders[osIndex].assetName = document.getElementById('details-os-asset-edit').value;
+            workOrders[osIndex].shift = document.getElementById('details-os-shift-edit').value;
+            workOrders[osIndex].startDate = new Date(document.getElementById('details-os-start-date').value + 'T00:00:00');
+            workOrders[osIndex].endDate = new Date(document.getElementById('details-os-end-date').value + 'T00:00:00');
+            
+            osDetailsModal.classList.remove('show');
+            updateOverdueStatus();
+            renderOsTable();
+            updateAllKpis();
+            if (window.location.hash === '#cronograma') renderGanttChart();
+            if (window.location.hash === '#indicadores') renderCompletionPerformanceChart();
+        }
+    });
+
+    document.getElementById('ai-troubleshoot-btn').addEventListener('click', async () => { if (!currentOs) return; const outputDiv = document.getElementById('ai-assistant-output'); outputDiv.innerHTML = '<div class="flex justify-center items-center h-full"><div class="spinner"></div></div>'; const assetName = currentOs.assetName || 'equipamento'; const prompt = `Você é um técnico de manutenção sênior. Para uma OS com título "${currentOs.title}" em um(a) "${assetName}", e com a descrição "${currentOs.description}", crie um guia de solução de problemas passo a passo. Formate a resposta como uma lista ordenada em HTML (<ol><li>...).`; try { const result = await callGemini(prompt); outputDiv.innerHTML = result; } catch (e) { outputDiv.innerHTML = '<p class="text-red-500">Erro ao gerar guia.</p>'; } });
+    document.getElementById('ai-parts-btn').addEventListener('click', async () => { if (!currentOs) return; const outputDiv = document.getElementById('ai-assistant-output'); outputDiv.innerHTML = '<div class="flex justify-center items-center h-full"><div class="spinner"></div></div>'; const assetName = currentOs.assetName || 'equipamento'; const prompt = `Para uma OS com título "${currentOs.title}" em um(a) "${assetName}", sugira uma lista de peças sobressalentes que podem ser necessárias. Responda apenas com um JSON contendo um array de strings chamado "parts". Ex: {"parts": ["Peça A", "Peça B"]}.`; try { const result = await callGemini(prompt); const cleanJsonString = result.replace(/```json|```/g, '').trim(); const data = JSON.parse(cleanJsonString); if (data.parts && data.parts.length > 0) { outputDiv.innerHTML = '<h5 class="font-bold mb-2">Peças Sugeridas:</h5><div class="flex flex-wrap gap-2">' + data.parts.map(part => `<span class="bg-gray-200 text-gray-800 text-sm font-medium px-2.5 py-0.5 rounded-full">${part}</span>`).join('') + '</div>'; } else { outputDiv.innerHTML = '<p>Nenhuma peça específica sugerida.</p>'; } } catch (e) { outputDiv.innerHTML = '<p class="text-red-500">Erro ao sugerir peças.</p>'; } });
+    document.getElementById('ai-safety-btn').addEventListener('click', async () => { if (!currentOs) return; const outputDiv = document.getElementById('ai-assistant-output'); outputDiv.innerHTML = '<div class="flex justify-center items-center h-full"><div class="spinner"></div></div>'; const assetName = currentOs.assetName || 'equipamento'; const prompt = `Para a tarefa de manutenção "${currentOs.title}" em um(a) "${assetName}", gere uma lista de procedimentos de segurança essenciais. Inclua uma seção para EPIs (Equipamentos de Proteção Individual) e outra para LOTO (Lockout/Tagout), se aplicável. Formate a resposta em HTML com subtítulos <h4> e listas <ul><li>.`; try { const result = await callGemini(prompt); outputDiv.innerHTML = result; } catch (e) { outputDiv.innerHTML = '<p class="text-red-500">Erro ao gerar procedimentos de segurança.</p>'; } });
+    
+    function initExportView() {
+        const techListContainer = document.getElementById('export-technicians-list');
+        techListContainer.innerHTML = '';
+        technicians.forEach(tech => {
+            const div = document.createElement('div');
+            div.className = 'flex items-center';
+            div.innerHTML = `<input id="tech-${tech.id}" value="${tech.id}" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 export-tech-checkbox">
+                             <label for="tech-${tech.id}" class="ml-3 text-sm text-gray-700">${tech.name}</label>`;
+            techListContainer.appendChild(div);
+        });
+
+        const statusListContainer = document.getElementById('export-status-list');
+        statusListContainer.innerHTML = '';
+        const exportableStatuses = ['Planejada', 'Em Andamento', 'Concluída', 'Atrasada'];
+        exportableStatuses.forEach(status => {
+            const div = document.createElement('div');
+            div.className = 'flex items-center';
+            div.innerHTML = `<input id="status-${status.replace(/\s+/g, '-')}" value="${status}" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 export-status-checkbox" checked>
+                             <label for="status-${status.replace(/\s+/g, '-')}" class="ml-3 text-sm text-gray-700">${status}</label>`;
+            statusListContainer.appendChild(div);
+        });
+        
+        document.getElementById('export-select-all-techs').addEventListener('change', (e) => {
+            document.querySelectorAll('.export-tech-checkbox').forEach(checkbox => {
+                checkbox.checked = e.target.checked;
+            });
+        });
+        
+        document.getElementById('export-select-all-status').addEventListener('change', (e) => {
+            document.querySelectorAll('.export-status-checkbox').forEach(checkbox => {
+                checkbox.checked = e.target.checked;
+            });
+        });
+
+        const startDateInput = document.getElementById('export-start-date');
+        const endDateInput = document.getElementById('export-end-date');
+        const today = new Date();
+        const nextWeek = new Date();
+        nextWeek.setDate(today.getDate() + 7);
+        startDateInput.value = toInputDate(today);
+        endDateInput.value = toInputDate(nextWeek);
+    }
+    
+    function resetOsFilters() {
+        document.getElementById('os-filter-status').value = 'all';
+        document.getElementById('os-filter-priority').value = 'all';
+        document.getElementById('os-filter-shift').value = 'all';
+        document.getElementById('os-search').value = '';
+        document.getElementById('os-filter-asset').value = '';
+        sessionStorage.removeItem('osFilter');
+    }
+
+    document.getElementById('clear-os-filters-btn').addEventListener('click', () => {
+        resetOsFilters();
+        renderOsTable();
+    });
+
+    document.getElementById('export-schedule-btn').addEventListener('click', () => {
+        const selectedTechIds = Array.from(document.querySelectorAll('#export-technicians-list input:checked')).map(cb => parseInt(cb.value));
+        const selectedStatuses = Array.from(document.querySelectorAll('#export-status-list input:checked')).map(cb => cb.value);
+
+        if (selectedTechIds.length === 0) {
+            alert('Por favor, selecione pelo menos um técnico.');
+            return;
+        }
+        if (selectedStatuses.length === 0) {
+            alert('Por favor, selecione pelo menos um status.');
+            return;
+        }
+
+        const startDate = new Date(document.getElementById('export-start-date').value + 'T00:00:00');
+        const endDate = new Date(document.getElementById('export-end-date').value + 'T23:59:59');
+
+        const doc = new jsPDF();
+        doc.setFontSize(18);
+        doc.text('Cronograma de Manutenção - Sengi', 14, 22);
+        doc.setFontSize(11);
+        doc.setTextColor(100);
+        doc.text(`Período: ${formatDate(startDate)} a ${formatDate(endDate)}`, 14, 30);
+        
+        let yPos = 40;
+
+        selectedTechIds.forEach(techId => {
+            const tech = technicians.find(t => t.id === techId);
+            const techWorkOrders = workOrders.filter(os => 
+                os.technicianId === techId &&
+                (os.startDate <= endDate && os.endDate >= startDate) &&
+                selectedStatuses.includes(os.status)
+            );
+
+            if (techWorkOrders.length > 0) {
+                if (yPos > 250) { doc.addPage(); yPos = 22; }
+                doc.setFontSize(14);
+                doc.setTextColor(40);
+                doc.text(tech.name, 14, yPos);
+                yPos += 7;
+
+                const tableData = techWorkOrders.map(os => [
+                    os.id,
+                    os.title,
+                    os.assetName,
+                    os.shift,
+                    formatDate(os.startDate),
+                    os.status,
+                    os.completionDate ? formatDate(os.completionDate) : ''
+                ]);
+
+                doc.autoTable({
+                    startY: yPos,
+                    head: [['ID', 'Título', 'Ativo', 'Turno', 'Data Início', 'Status', 'Data Conclusão']],
+                    body: tableData,
+                    theme: 'striped',
+                    headStyles: { fillColor: [34, 160, 133] }
+                });
+                yPos = doc.autoTable.previous.finalY + 15;
+            }
+        });
+        doc.save(`cronograma_sengi_${toInputDate(new Date())}.pdf`);
+    });
+
+
+    async function callGemini(prompt) {
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+        const payload = { contents: [{ parts: [{ text: prompt }] }] };
+        const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!response.ok) { throw new Error(`API call failed with status: ${response.status}`); }
+        const result = await response.json();
+        if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
+            return result.candidates[0].content.parts[0].text;
+        } else { throw new Error("Invalid response structure from Gemini API"); }
+    }
+
+    init();
+});
+</script>
+
+</body>
+</html>
